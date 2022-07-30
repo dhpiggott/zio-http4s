@@ -17,11 +17,17 @@ object Ember extends ZIOApp with Http4sClientDsl[Task] with Http4sDsl[Task]:
   override def bootstrap: TaskLayer[Environment] =
     ZLayer.make[Client[Task] with Server](
       ZLayer.scoped(
-        EmberClientBuilder.default[Task].build.toScopedZIO
+        EmberClientBuilder
+          .default[Task]
+          .withMaxTotal(1000)
+          .withMaxPerKey(Function.const(1000))
+          .build
+          .toScopedZIO
       ),
       ZLayer.scoped(
         EmberServerBuilder
           .default[Task]
+          .withMaxConnections(1000)
           .withHttpApp(
             HttpRoutes
               .of[Task] { case GET -> Root / "ping" => Ok("pong") }
@@ -32,16 +38,25 @@ object Ember extends ZIOApp with Http4sClientDsl[Task] with Http4sDsl[Task]:
       )
     )
 
-  override def run: RIO[Environment, ExitCode] = ZIO
-    .foreachPar(
-      Range.inclusive(1, 100)
-    )(i =>
+  override def run: RIO[Environment, ExitCode] =
+    (
       for
-        client <- ZIO.service[Client[Task]]
-        server <- ZIO.service[Server]
-        text <- client.get(server.baseUri / "ping")(_.as[String])
-        _ = assert(text == "pong")
-        _ <- Console.printLine(s"Ping $i")
+        n <- ZIO.succeed(1000)
+        pending <- Ref.make(n)
+        _ <- ZIO.foreachPar(Range.inclusive(1, n))(i =>
+          for
+            client <- ZIO.service[Client[Task]]
+            server <- ZIO.service[Server]
+            text <- client.get(server.baseUri / "ping")(_.as[String])
+            _ = assert(text == "pong")
+            pending <- pending.updateAndGet(_ - 1)
+            width = n.toString().length()
+            fiberId <- ZIO.fiberId
+            _ <- Console.printLine(
+              s"Ping %${width}s complete, %${width}s remaining, fiber %s"
+                .format(i, pending, fiberId)
+            )
+          yield ()
+        )
       yield ()
-    )
-    .exitCode
+    ).exitCode
