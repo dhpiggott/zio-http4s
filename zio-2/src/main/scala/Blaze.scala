@@ -10,16 +10,19 @@ import zio.interop.catz.*
 
 object Blaze extends ZIOApp with Http4sClientDsl[Task] with Http4sDsl[Task]:
 
-  def patchExecutor(patch: (Executor => Task[Unit])): Task[Unit] = for
-    executor <- ZIO.executor
-    _ <- Console.printLine(s"Patching $executor")
-    _ <- patch(executor).tapError(e => Console.printLineError(e.toString))
-    _ <- Console.printLine(s"Patched $executor")
-  yield ()
+  val totalPings = 10000
+  val pingsAtATime = 1000
 
-  def disableAutoBlocking(executor: Executor): Task[Unit] = for 
+  def patchExecutor(patch: (Executor => Task[Unit])): Task[Unit] =
+    ZIO.executorWith(patch)
+
+  def disableAutoBlocking(executor: Executor): Task[Unit] = for
     _ <- Console.printLine(s"executor: ${executor.getClass}")
-    blockingLocations <- ZIO.attempt(executor.getClass().getDeclaredField("zio$internal$ZScheduler$$blockingLocations"))
+    blockingLocations <- ZIO.attempt(
+      executor
+        .getClass()
+        .getDeclaredField("zio$internal$ZScheduler$$blockingLocations")
+    )
     _ <- Console.printLine(s"blockingLocations: $blockingLocations")
     _ <- ZIO.attempt(blockingLocations.set(executor, EmptySet))
   yield ()
@@ -40,44 +43,53 @@ object Blaze extends ZIOApp with Http4sClientDsl[Task] with Http4sDsl[Task]:
         patchExecutor(disableAutoBlocking)
       ),
       ZLayer.scoped(
-        BlazeClientBuilder[Task]
-          .withMaxTotalConnections(1000)
-          .withMaxConnectionsPerRequestKey(Function.const(1000))
-          .resource
-          .toScopedZIO
+        for
+          executor <- ZIO.executor
+          client <- BlazeClientBuilder[Task]
+            .withExecutionContext(executor.asExecutionContext)
+            .withMaxTotalConnections(pingsAtATime)
+            .withMaxConnectionsPerRequestKey(Function.const(pingsAtATime))
+            .resource
+            .toScopedZIO
+        yield client
       ),
       ZLayer.scoped(
-        BlazeServerBuilder[Task]
-          .withMaxConnections(1000)
-          .withHttpApp(
-            HttpRoutes
-              .of[Task] { case GET -> Root / "ping" => Ok("pong") }
-              .orNotFound
-          )
-          .resource
-          .toScopedZIO
+        for
+          executor <- ZIO.executor
+          server <- BlazeServerBuilder[Task]
+            .withExecutionContext(executor.asExecutionContext)
+            .withMaxConnections(1000)
+            .withHttpApp(
+              HttpRoutes
+                .of[Task] { case GET -> Root / "ping" => Ok("pong") }
+                .orNotFound
+            )
+            .resource
+            .toScopedZIO
+        yield server
       )
     )
 
-  override def run: RIO[Environment, ExitCode] =
+  override def run: URIO[Environment, ExitCode] =
     (
       for
-        n <- ZIO.succeed(1000)
-        pending <- Ref.make(n)
-        _ <- ZIO.foreachPar(Range.inclusive(1, n))(i =>
-          for
-            client <- ZIO.service[Client[Task]]
-            server <- ZIO.service[Server]
-            text <- client.get(server.baseUri / "ping")(_.as[String])
-            _ = assert(text == "pong")
-            pending <- pending.updateAndGet(_ - 1)
-            width = n.toString().length()
-            fiberId <- ZIO.fiberId
-            _ <- Console.printLine(
-              s"Ping %${width}s complete, %${width}s remaining, fiber %s"
-                .format(i, pending, fiberId)
-            )
-          yield ()
+        pending <- Ref.make(totalPings)
+        _ <- ZIO.withParallelism(pingsAtATime)(
+          ZIO.foreachPar(Range.inclusive(1, totalPings))(i =>
+            for
+              client <- ZIO.service[Client[Task]]
+              server <- ZIO.service[Server]
+              text <- client.get(server.baseUri / "ping")(_.as[String])
+              _ = assert(text == "pong")
+              pending <- pending.updateAndGet(_ - 1)
+              width = totalPings.toString().length()
+              fiberId <- ZIO.fiberId
+              _ <- Console.printLine(
+                s"Ping %${width}s complete, %${width}s remaining, fiber %s"
+                  .format(i, pending, fiberId)
+              )
+            yield ()
+          )
         )
       yield ()
     ).exitCode

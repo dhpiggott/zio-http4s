@@ -14,21 +14,23 @@ import zio.interop.catz.*
 
 object Blaze extends App with Http4sClientDsl[Task] with Http4sDsl[Task]:
 
+  val totalPings = 10000
+  val pingsAtATime = 1000
+
   override def run(
       args: List[String]
   ): URIO[Blocking & Clock & Console, ExitCode] =
     (
       for
-        n <- UIO(1000)
-        pending <- Ref.make(n)
-        _ <- RIO.foreachPar(Range.inclusive(1, n))(i =>
+        pending <- Ref.make(totalPings)
+        _ <- RIO.foreachParN(pingsAtATime)(Range.inclusive(1, totalPings))(i =>
           for
             client <- ZIO.service[Client[Task]]
             server <- ZIO.service[Server]
             text <- client.get(server.baseUri / "ping")(_.as[String])
             _ = assert(text == "pong")
             pending <- pending.updateAndGet(_ - 1)
-            width = n.toString().length()
+            width = totalPings.toString().length()
             fiberId <- ZIO.fiberId
             _ <- putStrLn(
               s"Ping %${width}s complete, %${width}s remaining, fiber %s"
@@ -44,8 +46,9 @@ object Blaze extends App with Http4sClientDsl[Task] with Http4sDsl[Task]:
           .toManaged_
           .flatMap(implicit runtime =>
             BlazeClientBuilder[Task]
-              .withMaxTotalConnections(1000)
-              .withMaxConnectionsPerRequestKey(Function.const(1000))
+              .withExecutionContext(runtime.platform.executor.asEC)
+              .withMaxTotalConnections(pingsAtATime)
+              .withMaxConnectionsPerRequestKey(Function.const(pingsAtATime))
               .resource
               .toManagedZIO
           )
@@ -54,7 +57,8 @@ object Blaze extends App with Http4sClientDsl[Task] with Http4sDsl[Task]:
           .toManaged_
           .flatMap(implicit runtime =>
             BlazeServerBuilder[Task]
-              .withMaxConnections(1000)
+              .withExecutionContext(runtime.platform.executor.asEC)
+              .withMaxConnections(pingsAtATime)
               .withHttpApp(
                 HttpRoutes
                   .of[Task] { case GET -> Root / "ping" => Ok("pong") }
