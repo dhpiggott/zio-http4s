@@ -13,35 +13,12 @@ object Blaze extends ZIOApp with Http4sClientDsl[Task] with Http4sDsl[Task]:
   val totalPings = 10000
   val pingsAtATime = 1000
 
-  def patchExecutor(patch: (Executor => Task[Unit])): Task[Unit] =
-    ZIO.executorWith(patch)
-
-  def disableAutoBlocking(executor: Executor): Task[Unit] = for
-    _ <- Console.printLine(s"executor: ${executor.getClass}")
-    blockingLocations <- ZIO.attempt(
-      executor
-        .getClass()
-        .getDeclaredField("zio$internal$ZScheduler$$blockingLocations")
-    )
-    _ <- Console.printLine(s"blockingLocations: $blockingLocations")
-    _ <- ZIO.attempt(blockingLocations.set(executor, EmptySet))
-  yield ()
-
-  object EmptySet extends Set[Any]:
-    def iterator: Iterator[Any] = Iterator.empty
-    def excl(elem: Any): Set[Any] = this
-    def incl(elem: Any): Set[Any] = this
-    def contains(elem: Any): Boolean = false
-
   type Environment = Client[Task] with Server
 
   val environmentTag: EnvironmentTag[Environment] = EnvironmentTag[Environment]
 
   override def bootstrap: TaskLayer[Environment] =
     ZLayer.make[Client[Task] with Server](
-      ZLayer.fromZIO(
-        patchExecutor(disableAutoBlocking)
-      ),
       ZLayer.scoped(
         for
           executor <- ZIO.executor
