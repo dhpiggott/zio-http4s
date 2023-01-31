@@ -1,6 +1,6 @@
 name := "zio-http4s"
 
-ThisBuild / scalaVersion := "3.1.3"
+ThisBuild / scalaVersion := "3.2.1"
 ThisBuild / scalafixDependencies += "com.github.liancheng" %% "organize-imports" % "0.5.0"
 ThisBuild / semanticdbEnabled := true
 
@@ -32,9 +32,9 @@ lazy val `zio-2` = project
     libraryDependencies ++= Seq(
       "ch.qos.logback" % "logback-classic" % "1.2.11",
       "dev.zio" %% "izumi-reflect" % "2.1.3",
-      "dev.zio" %% "zio" % "2.0.0",
-      "dev.zio" %% "zio-interop-cats" % "3.3.0",
-      "dev.zio" %% "zio-stacktracer" % "2.0.0",
+      "dev.zio" %% "zio" % "2.0.6",
+      "dev.zio" %% "zio-interop-cats" % "23.0.0.1",
+      "dev.zio" %% "zio-stacktracer" % "2.0.6",
       "org.http4s" %% "http4s-blaze-client" % "0.23.12",
       "org.http4s" %% "http4s-blaze-server" % "0.23.12",
       "org.http4s" %% "http4s-client" % "0.23.14",
